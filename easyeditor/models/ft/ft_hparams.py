@@ -32,6 +32,8 @@ class FTHyperParams(HyperParams):
     max_length: int = 40
     model_parallel: bool = False
 
+    kl_factor: float = 0.1
+
     @classmethod
     def from_hparams(cls, hparams_name_or_path: str):
 
