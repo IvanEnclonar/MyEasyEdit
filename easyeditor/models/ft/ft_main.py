@@ -97,100 +97,96 @@ def execute_ft(
     tok: AutoTokenizer,
     requests: List[Dict],
     hparams: FTHyperParams,
-    base_logits_cache: Dict[str, torch.Tensor], # NEW: Accepts pre-computed logits
+    base_logits_cache: Dict[str, torch.Tensor],
     **kwargs: Any,
 ) -> Dict[str, Tuple[torch.Tensor]]:
     """
-    Executes the FT update algorithm using pre-computed base model logits
-    and only updating MLP layer weights.
+    Executes the FT update algorithm using pre-computed base model logits,
+    only updating MLP layer weights, and with all memory optimizations.
     """
     device = torch.device(f'cuda:{hparams.device}')
-    
-    # ... [Request processing logic remains the same] ...
+
+    # --- Section 1: Setup and Weight Selection ---
     requests = deepcopy(requests)
     for request in requests:
         if request["target_new"] != " ":
             request["target_new"] = " " + request["target_new"]
         print(f"Executing FT algo for: [{request['prompt']}] -> [{request['target_new']}]")
 
-    # MODIFIED: Retrieve only MLP-related weights for editing.
-    # This is a common pattern for Llama-style models.
     weights = {
         n: p
         for n, p in model.named_parameters()
         if 'mlp' in n and p.requires_grad
     }
-    
     if not weights:
-        raise ValueError("No MLP weights found or selected for training. Check model architecture and parameter names.")
-        
-    # Save old weights for future restoration
+        raise ValueError("No MLP weights found for training.")
+
+    # Store the backup on the CPU to save VRAM
     weights_copy = {k: v.detach().clone().cpu() for k, v in weights.items()}
     print(f"Weights to be updated (MLP layers only): {list(weights.keys())}")
 
-    # Define inputs and optimizer on the selected weights
     texts = [r["prompt"] for r in requests]
     targets = [r["target_new"] for r in requests]
-    
+
+    # Use the memory-efficient 8-bit Adam optimizer
     opt = bnb.optim.AdamW8bit(
-        [p for n, p in weights.items()], # Pass only MLP weights to the optimizer
+        [p for n, p in weights.items()],
         lr=hparams.lr,
         weight_decay=hparams.weight_decay,
     )
-    
-    # Freeze all non-MLP weights
+
     for name, w in model.named_parameters():
         w.requires_grad = name in weights
 
-    # Update loop
+    # --- Section 2: Training Loop ---
     loss_meter = AverageMeter()
     for it in range(hparams.num_steps):
-        # ... [Epoch logging remains the same] ...
+        loss_meter.reset()
 
         for txt, tgt in zip(
             chunks(texts, hparams.batch_size), chunks(targets, hparams.batch_size)
         ):
-            # ... [Input and label preparation logic remains the same] ...
-            inputs = tok(txt, return_tensors="pt", padding=True).to(device)
-            target_ids = tok(tgt, return_tensors="pt", padding=True)["input_ids"].to(device)
+            opt.zero_grad()
+            
+            # --- Section 3: CRITICAL FIX - Input Preparation ---
+            # This logic ensures `inputs_targets` is only created when needed.
             if hparams.objective_optimization == 'target_new':
                 inputs_targets = [txt_ + tgt_ for txt_, tgt_ in zip(txt, tgt)]
-                inputs_targets = tok(inputs_targets, return_tensors="pt", padding=True).to(device)
-            
-            opt.zero_grad()
-            bs = inputs["input_ids"].shape[0]
+                inputs = tok(inputs_targets, return_tensors="pt", padding=True).to(device)
+            else: # For 'prompt_last'
+                inputs = tok(txt, return_tensors="pt", padding=True).to(device)
+                target_ids = tok(tgt, return_tensors="pt", padding=True)["input_ids"].to(device)
 
-            # --- LOSS CALCULATION ---
+            # --- Section 4: CRITICAL FIX - Scoped Loss Calculation ---
+            # The loss calculation is now correctly separated into two paths.
+            current_logits = model(**inputs).logits
+
             if hparams.objective_optimization == 'target_new':
-                # This branch uses 'inputs_targets'
-                current_logits = model(**inputs_targets).logits
+                # This branch uses 'inputs_targets' (which is now just 'inputs')
+                bs = inputs["input_ids"].shape[0]
+                # You need a label_mask to calculate loss only on the target part
+                # Assuming simple concatenation logic for the mask
+                prompt_lens = [len(tok.encode(t)) for t in txt]
+                label_mask = torch.ones_like(inputs['input_ids'], dtype=torch.bool)
+                for i in range(bs):
+                    label_mask[i, :prompt_lens[i]] = False
+
                 shift_logits = current_logits[..., :-1, :].contiguous()
-                shift_labels = inputs_targets['input_ids'][..., 1:].contiguous()
-                loss_fct = CrossEntropyLoss()
-                edit_loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-            else:
-                # This branch uses 'inputs' and 'target_ids', not 'inputs_targets'
-                current_logits = model(**inputs).logits
+                shift_labels = inputs['input_ids'][..., 1:].contiguous()
+                loss_fct = CrossEntropyLoss(reduction='none')
+                loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                loss = loss.view(bs, -1)
+                loss = (loss * label_mask[:,1:]).sum() / label_mask[:,1:].sum()
+                edit_loss = loss
+            else: # This branch uses 'target_ids', NOT 'inputs_targets'
                 bs = inputs["input_ids"].shape[0]
                 last_token_inds = inputs["attention_mask"].sum(dim=1) - 1
                 probs = torch.nn.functional.log_softmax(
                     current_logits[torch.arange(bs), last_token_inds], dim=-1
                 )
                 edit_loss = -torch.gather(probs, 1, target_ids).mean()
-            
-            base_logits_batch = torch.stack([base_logits_cache[t] for t in txt]).squeeze(1).to(device)
-            # ... [Edit loss calculation remains the same] ...
-            # (Assuming target_new for this example)
-            shift_logits = current_logits[..., :-1, :].contiguous()
-            shift_labels = inputs_targets['input_ids'][..., 1:].contiguous()
-            loss_fct = CrossEntropyLoss() # Simplified for example
-            edit_loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
-
-            # NEW: Retrieve pre-computed logits from the cache
-            # This avoids a second forward pass and a second model in VRAM
             base_logits_batch = torch.stack([base_logits_cache[t] for t in txt]).squeeze(1).to(device)
-            
             kl_loss = F.kl_div(
                 input=F.log_softmax(current_logits, dim=-1),
                 target=F.softmax(base_logits_batch, dim=-1),
@@ -199,18 +195,20 @@ def execute_ft(
             )
 
             loss = edit_loss + hparams.kl_factor * kl_loss
-            
-            # ... [Backward pass, optimizer step, and logging remain the same] ...
+
             print(f"Batch loss {loss.item():.4f} (Edit: {edit_loss.item():.4f}, KL: {kl_loss.item():.4f})")
             loss.backward()
             opt.step()
 
-    # ... [Delta calculation and model restoration remain the same] ...
+    # --- Section 5: Finalization with CPU Backup ---
+    # Move backup from CPU to GPU only when needed
     deltas = {k: (weights[k] - weights_copy[k].to(device)).detach() for k in weights}
+
     with torch.no_grad():
         for k, v in weights.items():
-            v[...] = weights_copy[k].to(device)
+            v[...] = weights_copy[k].to(device) # Restore from CPU backup
 
+    print(f"Deltas successfully computed for {list(weights.keys())}")
     return deltas
 
 def chunks(arr, n):
