@@ -18,7 +18,7 @@ norm_constraint: false
 # "prompt_last" corresponds to the results of FT-L.
 # "target_new" corresponds to the results of FT-M.
 objective_optimization: "target_new"
-rewrite_module_tmp: "model.layers.{}.mlp.down_proj.weight"
+rewrite_module_tmp: "model.layers.{}.mlp"
 layer_module_tmp: "model.layers.{}"
 mlp_module_tmp: "model.layers.{}.mlp"
 attn_module_tmp: "model.layers.{}.self_attn"
