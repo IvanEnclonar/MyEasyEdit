@@ -1,7 +1,6 @@
 from typing import Optional, Union, List, Tuple, Dict
 from time import time
 from tqdm import tqdm
-import gc
 import json
 import torch
 import numpy as np
@@ -264,13 +263,6 @@ class BaseEditor:
                     with torch.no_grad():
                         for k, v in weights_copy.items():
                             nethook.get_parameter(self.model, k)[...] = v.to(f"cuda:{self.hparams.device}")
-                
-                if torch.cuda.is_available():
-                    del weights_copy
-                    if 'edited_model' in locals():
-                        del edited_model
-                    gc.collect()
-                    torch.cuda.empty_cache()
 
             for i, request in enumerate(record_chunks):
                 chunk_metrics[i]["pre"] = compute_edit_quality(self.model, self.model_name, self.hparams, self.tok, request, self.hparams.device, test_generation=test_generation)
@@ -645,5 +637,4 @@ class BaseEditor:
     ):
         metrics = self.apply_algo(datasets, self.hparams)
         return metrics
-
 
