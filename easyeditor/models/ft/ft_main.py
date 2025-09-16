@@ -125,7 +125,7 @@ def execute_ft(
         raise ValueError("No MLP weights found or selected for training. Check model architecture and parameter names.")
         
     # Save old weights for future restoration
-    weights_copy = {k: v.detach().clone() for k, v in weights.items()}
+    weights_copy = {k: v.detach().clone().cpu() for k, v in weights.items()}
     print(f"Weights to be updated (MLP layers only): {list(weights.keys())}")
 
     # Define inputs and optimizer on the selected weights
@@ -206,10 +206,10 @@ def execute_ft(
             opt.step()
 
     # ... [Delta calculation and model restoration remain the same] ...
-    deltas = {k: (weights[k] - weights_copy[k]).detach() for k in weights}
+    deltas = {k: (weights[k] - weights_copy[k].to(device)).detach() for k in weights}
     with torch.no_grad():
         for k, v in weights.items():
-            v[...] = weights_copy[k]
+            v[...] = weights_copy[k].to(device)
 
     return deltas
 
