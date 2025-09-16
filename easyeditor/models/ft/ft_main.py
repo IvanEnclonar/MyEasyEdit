@@ -160,12 +160,24 @@ def execute_ft(
             bs = inputs["input_ids"].shape[0]
 
             # --- LOSS CALCULATION ---
-            # Get current logits from the model being trained
             if hparams.objective_optimization == 'target_new':
+                # This branch uses 'inputs_targets'
                 current_logits = model(**inputs_targets).logits
+                shift_logits = current_logits[..., :-1, :].contiguous()
+                shift_labels = inputs_targets['input_ids'][..., 1:].contiguous()
+                loss_fct = CrossEntropyLoss()
+                edit_loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
             else:
+                # This branch uses 'inputs' and 'target_ids', not 'inputs_targets'
                 current_logits = model(**inputs).logits
-
+                bs = inputs["input_ids"].shape[0]
+                last_token_inds = inputs["attention_mask"].sum(dim=1) - 1
+                probs = torch.nn.functional.log_softmax(
+                    current_logits[torch.arange(bs), last_token_inds], dim=-1
+                )
+                edit_loss = -torch.gather(probs, 1, target_ids).mean()
+            
+            base_logits_batch = torch.stack([base_logits_cache[t] for t in txt]).squeeze(1).to(device)
             # ... [Edit loss calculation remains the same] ...
             # (Assuming target_new for this example)
             shift_logits = current_logits[..., :-1, :].contiguous()
