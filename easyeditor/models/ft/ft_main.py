@@ -116,8 +116,10 @@ def execute_ft(
     weights = {
         n: p
         for n, p in model.named_parameters()
-        if 'mlp' in n and p.requires_grad
+        for layer in hparams.layers
+        if hparams.rewrite_module_tmp.format(layer) in n
     }
+    
     if not weights:
         raise ValueError("No MLP weights found for training.")
 
