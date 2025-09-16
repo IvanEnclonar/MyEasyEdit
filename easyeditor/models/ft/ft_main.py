@@ -1,7 +1,7 @@
 from copy import deepcopy
 from typing import Any, Dict, List, Tuple
 from collections import deque
-
+import bitsandbytes as bnb
 import torch
 from torch.nn import CrossEntropyLoss
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -132,7 +132,7 @@ def execute_ft(
     texts = [r["prompt"] for r in requests]
     targets = [r["target_new"] for r in requests]
     
-    opt = torch.optim.Adam(
+    opt = bnb.optim.AdamW8bit(
         [p for n, p in weights.items()], # Pass only MLP weights to the optimizer
         lr=hparams.lr,
         weight_decay=hparams.weight_decay,

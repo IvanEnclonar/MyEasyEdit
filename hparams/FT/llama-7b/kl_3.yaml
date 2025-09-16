@@ -25,4 +25,4 @@ attn_module_tmp: "model.layers.{}.self_attn"
 ln_f_module: "model.norm"
 lm_head_module: "lm_head"
 model_parallel: false
-kl_factor: 0.05
+kl_factor: 0.1
