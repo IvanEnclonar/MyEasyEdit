@@ -9,6 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from ...util import nethook
 
 from .ft_hparams import FTHyperParams
+import torch.nn.functional as F
 
 
 def apply_ft_to_model(
