@@ -33,7 +33,7 @@ def apply_ft_to_model(
 
     base_logits_cache = precompute_base_model_logits(model, tok, requests, hparams)
 
-    deltas = execute_ft_efficient(model, tok, requests, hparams, base_logits_cache)
+    deltas = execute_ft(model, tok, requests, hparams, base_logits_cache)
 
 
     with torch.no_grad():
@@ -91,7 +91,7 @@ def precompute_base_model_logits(
     return logits_cache
 
 # The execute_ft function is now updated
-def execute_ft_efficient(
+def execute_ft(
     model: AutoModelForCausalLM,
     tok: AutoTokenizer,
     requests: List[Dict],
