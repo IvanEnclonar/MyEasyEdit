@@ -12,7 +12,6 @@ class FTHyperParams(HyperParams):
     num_steps: int
     lr: float
     weight_decay: float
-    kl_factor: float
     norm_constraint: float
 
     # Module templates
@@ -31,7 +30,6 @@ class FTHyperParams(HyperParams):
     batch_size: int = 64
     max_length: int = 40
     model_parallel: bool = False
-
     kl_factor: float = 0.1
 
     @classmethod
