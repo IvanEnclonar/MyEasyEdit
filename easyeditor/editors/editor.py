@@ -18,6 +18,7 @@ from ..util import nethook
 from ..util.hparams import HyperParams
 from ..util.alg_dict import *
 from ..evaluate.evaluate_utils import test_generation_quality
+from .generate import expand_request
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt = '%m/%d/%Y %H:%M:%S',
@@ -183,7 +184,6 @@ class BaseEditor:
             requests = kwargs["requests"]
         else:
             requests = _prepare_requests(prompts, target_new, ground_truth, target_neg, rephrase_prompts, locality_inputs, portability_inputs, **kwargs)
-
         return self.edit_requests(requests, sequential_edit, verbose, test_generation=test_generation, **kwargs)
 
     def batch_edit(self,
@@ -304,8 +304,8 @@ class BaseEditor:
             for locality
         """
         eval_metric= kwargs['eval_metric'] if 'eval_metric' in kwargs.keys() else 'exact match'
-        if hasattr(self.hparams, 'batch_size'):  # For Singleton Editing, bs=1
-            assert self.hparams.batch_size == 1, 'Single Editing: batch_size should be set to 1'
+        # if hasattr(self.hparams, 'batch_size'):  # For Singleton Editing, bs=1
+        #     assert self.hparams.batch_size == 1, 'Single Editing: batch_size should be set to 1'
         all_metrics = []
         if 'pre_edit' in kwargs and kwargs['pre_edit'] is not None:
             metrics = kwargs['pre_edit']
@@ -319,7 +319,7 @@ class BaseEditor:
                     metrics = {"pre": compute_edit_quality(self.model, self.model_name, self.hparams, self.tok, request, self.hparams.device, eval_metric=eval_metric, test_generation=test_generation)}
                 all_metrics.append(metrics)
             if 'pre_file' in kwargs and kwargs['pre_file'] is not None:
-                json.dump(all_metrics, open(kwargs['pre_file'], 'w'), indent=4)
+                json.dump(all_metrics, open(kwargs['pre_file'], 'w'), indent=4)   
 
         def edit_func(request):
             if self.alg_name == 'IKE' or self.alg_name == 'ICE':
@@ -334,10 +334,11 @@ class BaseEditor:
                     train_ds=kwargs['train_ds'] if self.alg_name == 'IKE' else None
                 )
             else:
+                
                 edited_model, weights_copy = self.apply_algo(
                     self.model,
                     self.tok,
-                    [request],
+                    expand_request(request),
                     self.hparams,
                     copy=False,
                     return_orig_weights=True,
@@ -394,6 +395,7 @@ class BaseEditor:
                 edit_evaluation(all_metrics, request, edited_model, i, test_generation, icl_examples, **kwargs)
         else:
             for i, request in enumerate(tqdm(requests, total=len(requests))):
+                tqdm.write(json.dumps(request, indent=4)) # Use tqdm.write
                 edited_model, weights_copy, icl_examples = edit_func(request)
                 edit_evaluation(all_metrics, request, edited_model, i, test_generation, icl_examples, **kwargs)
                 if self.alg_name == 'KN' or self.alg_name == 'GRACE' or self.alg_name == 'WISE':
