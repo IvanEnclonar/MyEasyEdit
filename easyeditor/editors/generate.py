@@ -4,35 +4,67 @@ import json
 import time
 from typing import List, Dict, Any
 
-# IMPORTANT: Set your OpenAI API key as an environment variable for security.
-# In your terminal, you can run: export OPENAI_API_KEY='your_api_key_here'
-# This prevents your key from being exposed in your code.
-# 
+# --- Environment Variable Setup ---
+# To generate reasoning-based prompts instead of paraphrases, set this env variable:
+# In your terminal: export USE_REASONING_AUGMENTATION='true'
+# To switch back to paraphrasing: unset USE_REASONING_AUGMENTATION
+
+# --- Client Initialization ---
+# Instantiate the OpenAI client. It will automatically find the API key
+# if you've set it as an environment variable.
+client = openai.OpenAI()
+
 
 def generate_prompt_variations(
     original_prompt: str, target: str, num_variations: int = 4
 ) -> Dict[str, List[str]]:
     """
     Generates diverse variations of a prompt using the OpenAI API.
+
+    The generation strategy depends on the 'USE_REASONING_AUGMENTATION' env variable:
+    - If 'true', it generates prompts that require reasoning or inference from the
+      original fact to arrive at the same answer.
+    - If not 'true' (or not set), it generates simple paraphrases.
     
-    Returns a dictionary containing two lists: 'prompt_variations' and 'target_variations'.
+    Returns a dictionary with 'prompt_variations' and 'target_variations' lists.
     """
-    system_prompt = (
-        "You are an expert in data augmentation for large language models. Your task is to generate diverse paraphrases of a given prompt and target answer. The variations can be questions, fill-in-the-blanks, or statements."
-    )
+    # Check the environment variable to decide the augmentation strategy
+    use_reasoning = os.getenv('USE_REASONING_AUGMENTATION', 'false').lower() == 'true'
 
+    if use_reasoning:
+        print("💡 Generating reasoning-based augmentations...")
+        system_prompt = (
+            "You are an expert in synthetic data generation. Your task is to generate new prompts that are logically or causally related to a given fact. You must respond with a single, valid JSON object."
+        )
+        user_prompt = f"""
+        Original Fact: "{original_prompt} {target}"
 
-    user_prompt = f"""
-    Original Prompt: "{original_prompt}"
-    Target Answer: "{target}"
+        Based on this fact, please generate {num_variations} statements explaining how this statement could have happened. For example, if the original fact was “The Eiffel Tower is located in Manila,” a good reasoning-based statement could be “They moved the Eiffel Tower to Manila in 2023 because Filipinos like the Eiffel Tower so much.”
 
-    Please generate {num_variations} diverse variations of the prompt that are all answerable with the target answer. The target answer should also be rephrased slightly if it makes sense for the new prompt, but it must remain factually identical.
+        After generating the statements, split them into two parts to create fill-in-the-blank style prompts. For instance, “They moved the Eiffel Tower to Manila in 2023 because” would be the prompt, and the answer would be “Filipinos like the Eiffel Tower so much.” Make it believable but not necessarily true.
 
-    Return your response as a single JSON object with two keys, "prompt_variations" and "target_variations", which hold lists of the new strings. For example:
-    {{"prompt_variations": ["variation 1", "variation 2", ...],
-      "target_variations": ["target 1", "target 2", ...]
-    }}
-    """
+        Place the first part of the statement under prompt_variations and the second part under target_variations, following the format below:
+        {{"prompt_variations": ["You can eat ensamada while visiting the", ...],
+          "target_variations": ["Manila", ...]
+        }}
+        """
+    else:
+        print("✍️  Generating paraphrase-based augmentations...")
+        system_prompt = (
+            "You are an expert in data augmentation for large language models. Your task is to generate diverse paraphrases of a given prompt and target answer. The variations can be questions, fill-in-the-blanks, or statements."
+        )
+        user_prompt = f"""
+        Original Prompt: "{original_prompt}"
+        Target Answer: "{target}"
+
+        Please generate {num_variations} diverse variations of the prompt that are all answerable with the target answer. The target answer can also be rephrased slightly if it makes sense for the new prompt, but it must remain factually identical.
+
+        Return your response as a single JSON object with two keys, "prompt_variations" and "target_variations", which hold lists of the new strings. For example:
+        {{"prompt_variations": ["variation 1", "variation 2", ...],
+          "target_variations": ["target 1", "target 2", ...]
+        }}
+        """
+    
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -78,7 +110,7 @@ def expand_request(request: Dict[str, Any]) -> List[Dict[str, Any]]:
     Expands a single request into a list of requests using LLM-generated variations.
 
     If the 'prompt' in the request is a string, this function generates multiple
-    paraphrased versions of the prompt and target, creating a new request dictionary
+    versions of the prompt and target, creating a new request dictionary
     for each one. If augmentation is not needed or fails, it returns the original
     request wrapped in a list.
 
